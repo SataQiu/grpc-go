@@ -44,6 +44,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/transport"
+	"google.golang.org/grpc/monitoring"
 )
 
 type streamHandler func(srv interface{}, stream ServerStream) error
@@ -282,6 +283,7 @@ type serverStream struct {
 	codec      Codec
 	statusCode codes.Code
 	statusDesc string
+	monitor    monitoring.RpcMonitor
 
 	tracing bool // set to EnableTracing when the serverStream is created.
 
@@ -326,6 +328,7 @@ func (ss *serverStream) SendMsg(m interface{}) (err error) {
 		err = transport.StreamErrorf(codes.Internal, "grpc: %v", err)
 		return err
 	}
+	ss.monitor.SentMessage()
 	return ss.t.Write(ss.s, out, &transport.Options{Last: false})
 }
 
@@ -342,5 +345,6 @@ func (ss *serverStream) RecvMsg(m interface{}) (err error) {
 			ss.mu.Unlock()
 		}
 	}()
+	ss.monitor.ReceivedMessage()
 	return recv(ss.p, ss.codec, m)
 }

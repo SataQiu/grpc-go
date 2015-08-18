@@ -46,6 +46,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/transport"
+	"google.golang.org/grpc/monitoring"
 )
 
 var (
@@ -72,10 +73,11 @@ var (
 // dialOptions configure a Dial call. dialOptions are set by the DialOption
 // values passed to Dial.
 type dialOptions struct {
-	codec    Codec
-	block    bool
-	insecure bool
-	copts    transport.ConnectOptions
+	codec           Codec
+	block           bool
+	insecure        bool
+	copts           transport.ConnectOptions
+	clientMonitor	monitoring.ClientMonitor
 }
 
 // DialOption configures how we set up the connection.
@@ -181,6 +183,10 @@ func Dial(target string, opts ...DialOption) (*ClientConn, error) {
 	if cc.dopts.codec == nil {
 		// Set the default codec.
 		cc.dopts.codec = protoCodec{}
+	}
+	if cc.dopts.clientMonitor == nil {
+		// Set the default to a no-op monitor.
+		cc.dopts.clientMonitor = &monitoring.NoOpMonitor{}
 	}
 	cc.stateCV = sync.NewCond(&cc.mu)
 	if cc.dopts.block {
