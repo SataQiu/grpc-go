@@ -45,27 +45,29 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/transport"
+	"google.golang.org/grpc/monitoring"
 )
 
 var (
-	// ErrUnspecTarget indicates that the target address is unspecified.
+// ErrUnspecTarget indicates that the target address is unspecified.
 	ErrUnspecTarget = errors.New("grpc: target is unspecified")
-	// ErrClientConnClosing indicates that the operation is illegal because
-	// the session is closing.
+// ErrClientConnClosing indicates that the operation is illegal because
+// the session is closing.
 	ErrClientConnClosing = errors.New("grpc: the client connection is closing")
-	// ErrClientConnTimeout indicates that the connection could not be
-	// established or re-established within the specified timeout.
+// ErrClientConnTimeout indicates that the connection could not be
+// established or re-established within the specified timeout.
 	ErrClientConnTimeout = errors.New("grpc: timed out trying to connect")
-	// minimum time to give a connection to complete
+// minimum time to give a connection to complete
 	minConnectTimeout = 20 * time.Second
 )
 
 // dialOptions configure a Dial call. dialOptions are set by the DialOption
 // values passed to Dial.
 type dialOptions struct {
-	codec Codec
-	block bool
-	copts transport.ConnectOptions
+	codec   Codec
+	block   bool
+	copts   transport.ConnectOptions
+	monitor	monitoring.RpcMonitor
 }
 
 // DialOption configures how we set up the connection.
@@ -124,6 +126,13 @@ func WithUserAgent(s string) DialOption {
 	}
 }
 
+// WithMonitoring returns a DialOption which sets the monitoring to use for this connection..
+func WithMonitoring(m monitoring.RpcMonitor) DialOption {
+	return func(o *dialOptions) {
+		o.monitor = m
+	}
+}
+
 // Dial creates a client connection the given target.
 func Dial(target string, opts ...DialOption) (*ClientConn, error) {
 	if target == "" {
@@ -144,6 +153,10 @@ func Dial(target string, opts ...DialOption) (*ClientConn, error) {
 	if cc.dopts.codec == nil {
 		// Set the default codec.
 		cc.dopts.codec = protoCodec{}
+	}
+	if cc.dopts.monitor == nil {
+		// Set the default to a no-op monitor.
+		cc.dopts.monitor = &monitoring.NoOpMonitor{}
 	}
 	cc.stateCV = sync.NewCond(&cc.mu)
 	if cc.dopts.block {
@@ -171,15 +184,15 @@ func Dial(target string, opts ...DialOption) (*ClientConn, error) {
 type ConnectivityState int
 
 const (
-	// Idle indicates the ClientConn is idle.
+// Idle indicates the ClientConn is idle.
 	Idle ConnectivityState = iota
-	// Connecting indicates the ClienConn is connecting.
+// Connecting indicates the ClienConn is connecting.
 	Connecting
-	// Ready indicates the ClientConn is ready for work.
+// Ready indicates the ClientConn is ready for work.
 	Ready
-	// TransientFailure indicates the ClientConn has seen a failure but expects to recover.
+// TransientFailure indicates the ClientConn has seen a failure but expects to recover.
 	TransientFailure
-	// Shutdown indicates the ClientConn has stated shutting down.
+// Shutdown indicates the ClientConn has stated shutting down.
 	Shutdown
 )
 
@@ -388,12 +401,12 @@ func (cc *ClientConn) wait(ctx context.Context, ts int) (transport.ClientTranspo
 				cc.ready = ready
 			}
 			cc.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return nil, 0, transport.ContextErr(ctx.Err())
-			// Wait until the new transport is ready or failed.
-			case <-ready:
-			}
+				select {
+				case <-ctx.Done():
+					return nil, 0, transport.ContextErr(ctx.Err())
+				// Wait until the new transport is ready or failed.
+				case <-ready:
+				}
 		}
 	}
 }
