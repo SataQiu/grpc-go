@@ -387,7 +387,6 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 }
 
 func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transport.Stream, srv *service, sd *StreamDesc) (err error) {
-	var statusCode codes.Code = codes.Unknown
 	ss := &serverStream{
 		t:       t,
 		s:       stream,
@@ -415,7 +414,7 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		if err != nil && err != io.EOF {
 			ss.monitor.Erred(err)
 		} else {
-			ss.monitor.Handled(statusCode)
+			ss.monitor.Handled(ss.statusCode)
 		}
 	}()
 
