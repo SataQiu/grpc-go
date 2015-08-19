@@ -1,16 +1,15 @@
 package monitoring
+
 import (
 	"google.golang.org/grpc/codes"
 )
 
-
 type RpcType string
 
 const (
-	Unary RpcType = "unary"
+	Unary     RpcType = "unary"
 	Streaming RpcType = "streaming"
 )
-
 
 // RpcMonitor is a per-RPC datastructure
 type RpcMonitor interface {
@@ -27,7 +26,6 @@ type RpcMonitor interface {
 	Erred(err error)
 }
 
-
 // ServerMonitor allocates new per-RPC monitors on the server side.
 type ServerMonitor interface {
 	// NewMonitor allocates a new per-RPC monitor, also signifying the start of an RPC call.
@@ -41,21 +39,20 @@ type ClientMonitor interface {
 }
 
 // NoOpMonitor is both a Client- and ServerMonitor that does nothing.
-type NoOpMonitor struct {}
+type NoOpMonitor struct{}
 
-func (m *NoOpMonitor) NewServerMonitor(rpcType RpcType, fullMethod string) RpcMonitor {
+func (m *NoOpMonitor) NewServerMonitor(RpcType, string) RpcMonitor {
 	return m
 }
 
-func (m *NoOpMonitor) NewClientMonitor(rpcType RpcType, fullMethod string) RpcMonitor {
+func (m *NoOpMonitor) NewClientMonitor(RpcType, string) RpcMonitor {
 	return m
 }
 
-func (m *NoOpMonitor) ReceivedMessage() {}
+func (*NoOpMonitor) ReceivedMessage() {}
 
-func (m *NoOpMonitor) SentMessage() {}
+func (*NoOpMonitor) SentMessage() {}
 
-func (m *NoOpMonitor) Handled(code codes.Code) {}
+func (*NoOpMonitor) Handled(code codes.Code) {}
 
-func (m *NoOpMonitor) Erred(err error) {}
-
+func (*NoOpMonitor) Erred(err error) {}
