@@ -52,6 +52,48 @@ var (
 			Name:      "rpc_erred_total",
 			Help:      "Total number of RPC that had failed on the RPC layer on the server.",
 		}, []string{"type", "service", "method", "error"})
+
+
+	clientStartedCounter = prom.NewCounterVec(
+		prom.CounterOpts{
+			Namespace: "grpc",
+			Subsystem: "client",
+			Name:      "rpc_started_total",
+			Help:      "Total number of RPCs started by the client.",
+		}, []string{"type", "service", "method"})
+
+	clientStreamMsgReceived = prom.NewCounterVec(
+		prom.CounterOpts{
+			Namespace: "grpc",
+			Subsystem: "client",
+			Name:      "rpc_msg_received_total",
+			Help:      "Total number of RPC stream messages received by the client.",
+		}, []string{"type", "service", "method"})
+
+	clientStreamMsgSent = prom.NewCounterVec(
+		prom.CounterOpts{
+			Namespace: "grpc",
+			Subsystem: "client",
+			Name:      "rpc_msg_sent_total",
+			Help:      "Total number of RPC stream messages sent by the client.",
+		}, []string{"type", "service", "method"})
+
+	clientHandledHistogram = prom.NewHistogramVec(
+		prom.HistogramOpts{
+			Namespace: "grpc",
+			Subsystem: "client",
+			Name:      "rpc_handled",
+			Help:      "Histogram of of RPC latency on the client side",
+			Buckets:   prom.DefBuckets,
+		}, []string{"type", "service", "method", "code"})
+
+	clientErred = prom.NewCounterVec(
+		prom.CounterOpts{
+			Namespace: "grpc",
+			Subsystem: "client",
+			Name:      "rpc_erred_total",
+			Help:      "Total number of RPC that had failed on the RPC layer on the client.",
+		}, []string{"type", "service", "method", "error"})	
 )
 
 func init() {
@@ -60,6 +102,11 @@ func init() {
 	prom.MustRegister(serverStreamMsgSent)
 	prom.MustRegister(serverHandledHistogram)
 	prom.MustRegister(serverErred)
+	prom.MustRegister(clientStartedCounter)
+	prom.MustRegister(clientStreamMsgReceived)
+	prom.MustRegister(clientStreamMsgSent)
+	prom.MustRegister(clientHandledHistogram)
+	prom.MustRegister(clientErred)
 }
 
 type ServerMonitor struct {
@@ -93,6 +140,39 @@ func (r *serverRpcMonitor) Handled(code codes.Code) {
 
 func (r *serverRpcMonitor) Erred(err error) {
 	serverErred.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, errorType(err)).Inc()
+}
+
+type ClientMonitor struct {
+}
+
+func (m *ClientMonitor) NewClientMonitor(rpcType monitoring.RpcType, fullMethod string) monitoring.RpcMonitor {
+	r := &clientRpcMonitor{rpcType: rpcType, startTime: time.Now()}
+	r.serviceName, r.methodName = splitMethodName(fullMethod)
+	clientStartedCounter.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
+	return r
+}
+
+type clientRpcMonitor struct {
+	rpcType     monitoring.RpcType
+	serviceName string
+	methodName  string
+	startTime   time.Time
+}
+
+func (r *clientRpcMonitor) ReceivedMessage() {
+	clientStreamMsgReceived.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
+}
+
+func (r *clientRpcMonitor) SentMessage() {
+	clientStreamMsgSent.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
+}
+
+func (r *clientRpcMonitor) Handled(code codes.Code) {
+	clientHandledHistogram.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, code.String()).Observe(time.Since(r.startTime).Seconds())
+}
+
+func (r *clientRpcMonitor) Erred(err error) {
+	clientErred.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, errorType(err)).Inc()
 }
 
 func splitMethodName(fullMethodName string) (string, string) {

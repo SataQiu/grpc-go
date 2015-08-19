@@ -106,6 +106,7 @@ func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 		desc:    desc,
 		codec:   cc.dopts.codec,
 		tracing: EnableTracing,
+		monitor: cc.dopts.clientMonitor.NewClientMonitor(monitoring.Streaming, method),
 	}
 	if cs.tracing {
 		cs.traceInfo.tr = trace.New("grpc.Sent."+methodFamily(method), method)
@@ -117,10 +118,12 @@ func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	}
 	t, err := cc.wait(ctx)
 	if err != nil {
+		cs.monitor.Erred(err)
 		return nil, toRPCErr(err)
 	}
 	s, err := t.NewStream(ctx, callHdr)
 	if err != nil {
+		cs.monitor.Erred(err)
 		return nil, toRPCErr(err)
 	}
 	cs.t = t
@@ -136,6 +139,7 @@ type clientStream struct {
 	p     *parser
 	desc  *StreamDesc
 	codec Codec
+	monitor    monitoring.RpcMonitor
 
 	tracing bool // set to EnableTracing when the clientStream is created.
 
@@ -173,6 +177,9 @@ func (cs *clientStream) SendMsg(m interface{}) (err error) {
 	}
 	defer func() {
 		if err == nil || err == io.EOF {
+			if err == nil {
+				cs.monitor.SentMessage()
+			}
 			return
 		}
 		if _, ok := err.(transport.ConnectionError); !ok {
@@ -192,7 +199,15 @@ func (cs *clientStream) RecvMsg(m interface{}) (err error) {
 	defer func() {
 		// err != nil indicates the termination of the stream.
 		if err != nil {
+			if rErr, ok := err.(rpcError); ok {
+				cs.monitor.Handled(rErr.code)
+			} else if err != io.EOF {
+				cs.monitor.Erred(err)
+				err = toRPCErr(err)
+			}
 			cs.finish(err)
+		} else {
+			cs.monitor.ReceivedMessage()
 		}
 	}()
 	if err == nil {
@@ -210,7 +225,7 @@ func (cs *clientStream) RecvMsg(m interface{}) (err error) {
 		err = recv(cs.p, cs.codec, m)
 		cs.t.CloseStream(cs.s, err)
 		if err == nil {
-			return toRPCErr(errors.New("grpc: client streaming protocol violation: get <nil>, want <EOF>"))
+			return errors.New("grpc: client streaming protocol violation: get <nil>, want <EOF>")
 		}
 		if err == io.EOF {
 			if cs.s.StatusCode() == codes.OK {
@@ -218,19 +233,20 @@ func (cs *clientStream) RecvMsg(m interface{}) (err error) {
 			}
 			return Errorf(cs.s.StatusCode(), cs.s.StatusDesc())
 		}
-		return toRPCErr(err)
+		return err
 	}
 	if _, ok := err.(transport.ConnectionError); !ok {
 		cs.t.CloseStream(cs.s, err)
 	}
 	if err == io.EOF {
 		if cs.s.StatusCode() == codes.OK {
+			cs.monitor.Handled(codes.OK)
 			// Returns io.EOF to indicate the end of the stream.
 			return
 		}
 		return Errorf(cs.s.StatusCode(), cs.s.StatusDesc())
 	}
-	return toRPCErr(err)
+	return err
 }
 
 func (cs *clientStream) CloseSend() (err error) {
@@ -311,6 +327,9 @@ func (ss *serverStream) SetTrailer(md metadata.MD) {
 
 func (ss *serverStream) SendMsg(m interface{}) (err error) {
 	defer func() {
+		if err != nil {
+			ss.monitor.SentMessage()
+		}
 		if ss.tracing {
 			ss.mu.Lock()
 			if err == nil {
@@ -328,12 +347,14 @@ func (ss *serverStream) SendMsg(m interface{}) (err error) {
 		err = transport.StreamErrorf(codes.Internal, "grpc: %v", err)
 		return err
 	}
-	ss.monitor.SentMessage()
 	return ss.t.Write(ss.s, out, &transport.Options{Last: false})
 }
 
 func (ss *serverStream) RecvMsg(m interface{}) (err error) {
 	defer func() {
+		if err != nil {
+			ss.monitor.ReceivedMessage()
+		}
 		if ss.tracing {
 			ss.mu.Lock()
 			if err == nil {
@@ -345,6 +366,5 @@ func (ss *serverStream) RecvMsg(m interface{}) (err error) {
 			ss.mu.Unlock()
 		}
 	}()
-	ss.monitor.ReceivedMessage()
 	return recv(ss.p, ss.codec, m)
 }

@@ -142,6 +142,13 @@ func WithUserAgent(s string) DialOption {
 	}
 }
 
+// WithMonitoring returns a DialOption which sets the monitoring to use for this connection..
+func WithMonitoring(m monitoring.ClientMonitor) DialOption {
+	return func(o *dialOptions) {
+		o.clientMonitor = m
+	}
+}
+
 // Dial creates a client connection the given target.
 func Dial(target string, opts ...DialOption) (*ClientConn, error) {
 	if target == "" {
