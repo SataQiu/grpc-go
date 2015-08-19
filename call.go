@@ -42,6 +42,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/transport"
+	"google.golang.org/grpc/monitoring"
 )
 
 // recvResponse receives and parses an RPC response.
@@ -111,6 +112,7 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 			return toRPCErr(err)
 		}
 	}
+	monitor := cc.dopts.clientMonitor.NewClientMonitor(monitoring.Unary, method)
 	defer func() {
 		for _, o := range opts {
 			o.after(&c)
@@ -153,14 +155,17 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 		)
 		// TODO(zhaoq): Need a formal spec of retry strategy for non-failfast rpcs.
 		if lastErr != nil && c.failFast {
+			monitor.Erred(lastErr)
 			return toRPCErr(lastErr)
 		}
 		t, ts, err = cc.wait(ctx, ts)
 		if err != nil {
 			if lastErr != nil {
 				// This was a retry; return the error from the last attempt.
+				monitor.Erred(err)
 				return toRPCErr(lastErr)
 			}
+			monitor.Erred(err)
 			return toRPCErr(err)
 		}
 		if c.traceInfo.tr != nil {
@@ -173,8 +178,10 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 				continue
 			}
 			if lastErr != nil {
+				monitor.Erred(lastErr)
 				return toRPCErr(lastErr)
 			}
+			monitor.Erred(err)
 			return toRPCErr(err)
 		}
 		// Receive the response
@@ -187,8 +194,10 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 		}
 		t.CloseStream(stream, lastErr)
 		if lastErr != nil {
+			monitor.Erred(lastErr)
 			return toRPCErr(lastErr)
 		}
+		monitor.Handled(stream.StatusCode())
 		return Errorf(stream.StatusCode(), stream.StatusDesc())
 	}
 }
