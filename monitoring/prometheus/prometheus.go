@@ -1,13 +1,14 @@
-
 package prometheus
 
 import (
-	prom "github.com/prometheus/client_golang/prometheus"
-	"time"
-	"google.golang.org/grpc/monitoring"
 	"strings"
-	"google.golang.org/grpc/transport"
+	"time"
+
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/monitoring"
+	"google.golang.org/grpc/transport"
+
+	prom "github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -61,7 +62,6 @@ func init() {
 	prom.MustRegister(serverErred)
 }
 
-
 type ServerMonitor struct {
 }
 
@@ -73,10 +73,10 @@ func (m *ServerMonitor) NewServerMonitor(rpcType monitoring.RpcType, fullMethod 
 }
 
 type serverRpcMonitor struct {
-	rpcType			monitoring.RpcType
-	serviceName 	string
-	methodName		string
-	startTime		time.Time
+	rpcType     monitoring.RpcType
+	serviceName string
+	methodName  string
+	startTime   time.Time
 }
 
 func (r *serverRpcMonitor) ReceivedMessage() {
@@ -105,11 +105,11 @@ func splitMethodName(fullMethodName string) (string, string) {
 
 func errorType(err error) string {
 	switch err.(type) {
-		case transport.ConnectionError:
-			return "ConnectionError"
-		case transport.StreamError:
-			return "StreamError"
-		default:
-			return "Unknown"
+	case transport.ConnectionError:
+		return "ConnectionError"
+	case transport.StreamError:
+		return "StreamError"
+	default:
+		return "Unknown"
 	}
 }
