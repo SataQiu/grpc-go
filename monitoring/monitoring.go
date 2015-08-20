@@ -11,7 +11,7 @@ const (
 	Streaming RpcType = "streaming"
 )
 
-// RpcMonitor is a per-RPC datastructure
+// RpcMonitor is a per-RPC datastructure.
 type RpcMonitor interface {
 	// ReceivedMessage is called on every stream message received by the monitor.
 	ReceivedMessage()
@@ -22,7 +22,7 @@ type RpcMonitor interface {
 	// Handled is called whenever the RPC handling completes (with OK or AppError).
 	Handled(code codes.Code)
 
-	// Errored is called whenever the RPC failed due to RPC-layer errors.
+	// Erred is called whenever the RPC failed due to RPC-layer errors.
 	Erred(err error)
 }
 
@@ -32,7 +32,7 @@ type ServerMonitor interface {
 	NewServerMonitor(rpcType RpcType, fullMethod string) RpcMonitor
 }
 
-// ServerMonitor allocates new per-RPC monitors on the server side.
+// Client allocates new per-RPC monitors on the client side.
 type ClientMonitor interface {
 	// NewMonitor allocates a new per-RPC monitor, also signifying the start of an RPC call.
 	NewClientMonitor(rpcType RpcType, fullMethod string) RpcMonitor
