@@ -39,6 +39,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -80,11 +81,12 @@ type service struct {
 
 // Server is a gRPC server to serve RPC requests.
 type Server struct {
-	opts  options
-	mu    sync.Mutex
-	lis   map[net.Listener]bool
-	conns map[transport.ServerTransport]bool
-	m     map[string]*service // service name -> service info
+	opts   options
+	mu     sync.Mutex
+	lis    map[net.Listener]bool
+	conns  map[transport.ServerTransport]bool
+	m      map[string]*service // service name -> service info
+	events trace.EventLog
 }
 
 type options struct {
@@ -141,11 +143,32 @@ func NewServer(opt ...ServerOption) *Server {
 		// Set to no monitoring monitor.
 		opts.serverMonitor = &monitoring.NoOpMonitor{}
 	}
-	return &Server{
+	s := &Server{
 		lis:   make(map[net.Listener]bool),
 		opts:  opts,
 		conns: make(map[transport.ServerTransport]bool),
 		m:     make(map[string]*service),
+	}
+	if EnableTracing {
+		_, file, line, _ := runtime.Caller(1)
+		s.events = trace.NewEventLog("grpc.Server", fmt.Sprintf("%s:%d", file, line))
+	}
+	return s
+}
+
+// printf records an event in s's event log, unless s has been stopped.
+// REQUIRES s.mu is held.
+func (s *Server) printf(format string, a ...interface{}) {
+	if s.events != nil {
+		s.events.Printf(format, a...)
+	}
+}
+
+// errorf records an error in s's event log, unless s has been stopped.
+// REQUIRES s.mu is held.
+func (s *Server) errorf(format string, a ...interface{}) {
+	if s.events != nil {
+		s.events.Errorf(format, a...)
 	}
 }
 
@@ -164,6 +187,7 @@ func (s *Server) RegisterService(sd *ServiceDesc, ss interface{}) {
 func (s *Server) register(sd *ServiceDesc, ss interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.printf("RegisterService(%q)", sd.ServiceName)
 	if _, ok := s.m[sd.ServiceName]; ok {
 		grpclog.Fatalf("grpc: Server.RegisterService found duplicate service registration for %q", sd.ServiceName)
 	}
@@ -195,6 +219,7 @@ var (
 // Service returns when lis.Accept fails.
 func (s *Server) Serve(lis net.Listener) error {
 	s.mu.Lock()
+	s.printf("serving")
 	if s.lis == nil {
 		s.mu.Unlock()
 		return ErrServerStopped
@@ -210,11 +235,18 @@ func (s *Server) Serve(lis net.Listener) error {
 	for {
 		c, err := lis.Accept()
 		if err != nil {
+			s.mu.Lock()
+			s.printf("done serving; Accept = %v", err)
+			s.mu.Unlock()
 			return err
 		}
+		var authInfo credentials.AuthInfo
 		if creds, ok := s.opts.creds.(credentials.TransportAuthenticator); ok {
-			c, err = creds.ServerHandshake(c)
+			c, authInfo, err = creds.ServerHandshake(c)
 			if err != nil {
+				s.mu.Lock()
+				s.errorf("ServerHandshake(%q) failed: %v", c.RemoteAddr(), err)
+				s.mu.Unlock()
 				grpclog.Println("grpc: Server.Serve failed to complete security handshake.")
 				continue
 			}
@@ -225,8 +257,9 @@ func (s *Server) Serve(lis net.Listener) error {
 			c.Close()
 			return nil
 		}
-		st, err := transport.NewServerTransport("http2", c, s.opts.maxConcurrentStreams)
+		st, err := transport.NewServerTransport("http2", c, s.opts.maxConcurrentStreams, authInfo)
 		if err != nil {
+			s.errorf("NewServerTransport(%q) failed: %v", c.RemoteAddr(), err)
 			s.mu.Unlock()
 			c.Close()
 			grpclog.Println("grpc: Server.Serve failed to create ServerTransport: ", err)
@@ -448,6 +481,12 @@ func (s *Server) Stop() {
 	for c := range cs {
 		c.Close()
 	}
+	s.mu.Lock()
+	if s.events != nil {
+		s.events.Finish()
+		s.events = nil
+	}
+	s.mu.Unlock()
 }
 
 // TestingCloseConns closes all exiting transports but keeps s.lis accepting new
