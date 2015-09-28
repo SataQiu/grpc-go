@@ -92,7 +92,7 @@ type Server struct {
 type options struct {
 	creds                credentials.Credentials
 	codec                Codec
-	serverMonitor        monitoring.ServerMonitor
+	monitor 			 monitoring.RpcMonitor
 	maxConcurrentStreams uint32
 }
 
@@ -122,9 +122,9 @@ func Creds(c credentials.Credentials) ServerOption {
 }
 
 // Monitoring returns a ServerOption that sets the monitoring mechanism for gRPC server.
-func Monitoring(m monitoring.ServerMonitor) ServerOption {
+func Monitoring(m monitoring.RpcMonitor) ServerOption {
 	return func(o *options) {
-		o.serverMonitor = m
+		o.monitor = m
 	}
 }
 
@@ -139,9 +139,9 @@ func NewServer(opt ...ServerOption) *Server {
 		// Set the default codec.
 		opts.codec = protoCodec{}
 	}
-	if opts.serverMonitor == nil {
+	if opts.monitor == nil {
 		// Set to no monitoring monitor.
-		opts.serverMonitor = &monitoring.NoOpMonitor{}
+		opts.monitor = &monitoring.NoOpMonitor{}
 	}
 	s := &Server{
 		lis:   make(map[net.Listener]bool),
@@ -297,6 +297,7 @@ func (s *Server) sendResponse(t transport.ServerTransport, stream *transport.Str
 func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.Stream, srv *service, md *MethodDesc) (err error) {
 	var traceInfo traceInfo
 	var statusCode codes.Code = codes.Unknown
+	var statusDesc string = ""
 	if EnableTracing {
 		traceInfo.tr = trace.New("grpc.Recv."+methodFamily(stream.Method()), stream.Method())
 		defer traceInfo.tr.Finish()
@@ -309,12 +310,12 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 			}
 		}()
 	}
-	monitor := s.opts.serverMonitor.NewServerMonitor(monitoring.Unary, stream.Method())
+	monitor := s.opts.monitor.NewForRpc(monitoring.Unary, stream.Method())
 	defer func() {
 		if err != nil && err != io.EOF {
 			monitor.Erred(err)
 		} else {
-			monitor.Handled(statusCode)
+			monitor.Handled(statusCode, statusDesc)
 		}
 	}()
 	p := &parser{s: stream}
@@ -343,7 +344,7 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		switch pf {
 		case compressionNone:
 			statusCode = codes.OK
-			statusDesc := ""
+			statusDesc = ""
 			reply, appErr := md.Handler(srv.server, stream.Context(), s.opts.codec, req)
 			if appErr != nil {
 				if err, ok := appErr.(rpcError); ok {
@@ -393,7 +394,7 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		p:       &parser{s: stream},
 		codec:   s.opts.codec,
 		tracing: EnableTracing,
-		monitor: s.opts.serverMonitor.NewServerMonitor(monitoring.Streaming, stream.Method()),
+		monitor: s.opts.monitor.NewForRpc(monitoring.Streaming, stream.Method()),
 	}
 	if ss.tracing {
 		ss.traceInfo.tr = trace.New("grpc.Recv."+methodFamily(stream.Method()), stream.Method())
@@ -414,7 +415,7 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		if err != nil && err != io.EOF {
 			ss.monitor.Erred(err)
 		} else {
-			ss.monitor.Handled(ss.statusCode)
+			ss.monitor.Handled(ss.statusCode, ss.statusDesc)
 		}
 	}()
 

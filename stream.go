@@ -106,7 +106,7 @@ func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 		desc:    desc,
 		codec:   cc.dopts.codec,
 		tracing: EnableTracing,
-		monitor: cc.dopts.clientMonitor.NewClientMonitor(monitoring.Streaming, method),
+		monitor: cc.dopts.monitor.NewForRpc(monitoring.Streaming, method),
 	}
 	if cs.tracing {
 		cs.traceInfo.tr = trace.New("grpc.Sent."+methodFamily(method), method)
@@ -139,7 +139,7 @@ type clientStream struct {
 	p     *parser
 	desc  *StreamDesc
 	codec Codec
-	monitor    monitoring.RpcMonitor
+	monitor    monitoring.PerRpcMonitor
 
 	tracing bool // set to EnableTracing when the clientStream is created.
 
@@ -200,7 +200,7 @@ func (cs *clientStream) RecvMsg(m interface{}) (err error) {
 		// err != nil indicates the termination of the stream.
 		if err != nil {
 			if rErr, ok := err.(rpcError); ok {
-				cs.monitor.Handled(rErr.code)
+				cs.monitor.Handled(rErr.code, rErr.desc)
 			} else if err != io.EOF {
 				cs.monitor.Erred(err)
 				err = toRPCErr(err)
@@ -240,7 +240,7 @@ func (cs *clientStream) RecvMsg(m interface{}) (err error) {
 	}
 	if err == io.EOF {
 		if cs.s.StatusCode() == codes.OK {
-			cs.monitor.Handled(codes.OK)
+			cs.monitor.Handled(codes.OK, "")
 			// Returns io.EOF to indicate the end of the stream.
 			return
 		}
@@ -299,7 +299,7 @@ type serverStream struct {
 	codec      Codec
 	statusCode codes.Code
 	statusDesc string
-	monitor    monitoring.RpcMonitor
+	monitor    monitoring.PerRpcMonitor
 
 	tracing bool // set to EnableTracing when the serverStream is created.
 

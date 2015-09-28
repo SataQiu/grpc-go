@@ -77,7 +77,7 @@ type dialOptions struct {
 	block           bool
 	insecure        bool
 	copts           transport.ConnectOptions
-	clientMonitor	monitoring.ClientMonitor
+	monitor 		monitoring.RpcMonitor
 }
 
 // DialOption configures how we set up the connection.
@@ -143,9 +143,9 @@ func WithUserAgent(s string) DialOption {
 }
 
 // WithMonitoring returns a DialOption which sets the monitoring to use for this connection..
-func WithMonitoring(m monitoring.ClientMonitor) DialOption {
+func WithMonitoring(m monitoring.RpcMonitor) DialOption {
 	return func(o *dialOptions) {
-		o.clientMonitor = m
+		o.monitor = m
 	}
 }
 
@@ -191,9 +191,9 @@ func Dial(target string, opts ...DialOption) (*ClientConn, error) {
 		// Set the default codec.
 		cc.dopts.codec = protoCodec{}
 	}
-	if cc.dopts.clientMonitor == nil {
+	if cc.dopts.monitor == nil {
 		// Set the default to a no-op monitor.
-		cc.dopts.clientMonitor = &monitoring.NoOpMonitor{}
+		cc.dopts.monitor = &monitoring.NoOpMonitor{}
 	}
 	cc.stateCV = sync.NewCond(&cc.mu)
 	if cc.dopts.block {

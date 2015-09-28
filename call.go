@@ -112,7 +112,7 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 			return toRPCErr(err)
 		}
 	}
-	monitor := cc.dopts.clientMonitor.NewClientMonitor(monitoring.Unary, method)
+	rpcMonitor := cc.dopts.monitor.NewForRpc(monitoring.Unary, method)
 	defer func() {
 		for _, o := range opts {
 			o.after(&c)
@@ -154,17 +154,17 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 		)
 		// TODO(zhaoq): Need a formal spec of retry strategy for non-failfast rpcs.
 		if lastErr != nil && c.failFast {
-			monitor.Erred(lastErr)
+			rpcMonitor.Erred(lastErr)
 			return toRPCErr(lastErr)
 		}
 		t, err = cc.wait(ctx)
 		if err != nil {
 			if lastErr != nil {
 				// This was a retry; return the error from the last attempt.
-				monitor.Erred(err)
+				rpcMonitor.Erred(err)
 				return toRPCErr(lastErr)
 			}
-			monitor.Erred(err)
+			rpcMonitor.Erred(err)
 			return toRPCErr(err)
 		}
 		if c.traceInfo.tr != nil {
@@ -177,10 +177,10 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 				continue
 			}
 			if lastErr != nil {
-				monitor.Erred(lastErr)
+				rpcMonitor.Erred(lastErr)
 				return toRPCErr(lastErr)
 			}
-			monitor.Erred(err)
+			rpcMonitor.Erred(err)
 			return toRPCErr(err)
 		}
 		// Receive the response
@@ -193,10 +193,10 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 		}
 		t.CloseStream(stream, lastErr)
 		if lastErr != nil {
-			monitor.Erred(lastErr)
+			rpcMonitor.Erred(lastErr)
 			return toRPCErr(lastErr)
 		}
-		monitor.Handled(stream.StatusCode())
+		rpcMonitor.Handled(stream.StatusCode(), stream.StatusDesc())
 		return Errorf(stream.StatusCode(), stream.StatusDesc())
 	}
 }

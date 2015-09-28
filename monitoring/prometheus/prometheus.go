@@ -112,7 +112,7 @@ func init() {
 type ServerMonitor struct {
 }
 
-func (m *ServerMonitor) NewServerMonitor(rpcType monitoring.RpcType, fullMethod string) monitoring.RpcMonitor {
+func (m *ServerMonitor) NewForRpc(rpcType monitoring.RpcType, fullMethod string) monitoring.PerRpcMonitor {
 	r := &serverRpcMonitor{rpcType: rpcType, startTime: time.Now()}
 	r.serviceName, r.methodName = splitMethodName(fullMethod)
 	serverStartedCounter.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
@@ -134,7 +134,7 @@ func (r *serverRpcMonitor) SentMessage() {
 	serverStreamMsgSent.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
 }
 
-func (r *serverRpcMonitor) Handled(code codes.Code) {
+func (r *serverRpcMonitor) Handled(code codes.Code, description string) {
 	serverHandledHistogram.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, code.String()).Observe(time.Since(r.startTime).Seconds())
 }
 
@@ -145,7 +145,7 @@ func (r *serverRpcMonitor) Erred(err error) {
 type ClientMonitor struct {
 }
 
-func (m *ClientMonitor) NewClientMonitor(rpcType monitoring.RpcType, fullMethod string) monitoring.RpcMonitor {
+func (m *ClientMonitor) NewForRpc(rpcType monitoring.RpcType, fullMethod string) monitoring.PerRpcMonitor {
 	r := &clientRpcMonitor{rpcType: rpcType, startTime: time.Now()}
 	r.serviceName, r.methodName = splitMethodName(fullMethod)
 	clientStartedCounter.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
@@ -167,7 +167,7 @@ func (r *clientRpcMonitor) SentMessage() {
 	clientStreamMsgSent.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName).Inc()
 }
 
-func (r *clientRpcMonitor) Handled(code codes.Code) {
+func (r *clientRpcMonitor) Handled(code codes.Code, description string) {
 	clientHandledHistogram.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, code.String()).Observe(time.Since(r.startTime).Seconds())
 }
 
