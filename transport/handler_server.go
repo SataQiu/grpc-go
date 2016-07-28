@@ -53,13 +53,24 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
+	"github.com/golang/protobuf/proto"
+	"encoding/binary"
+)
+
+
+const(
+	grpcBrowserContentType = "application/grpc+browser"
+)
+
+var(
+	grpcBrowserTerminationMarker = []byte{0xDE, 0xAD, 0xBE, 0xEF}
 )
 
 // NewServerHandlerTransport returns a ServerTransport handling gRPC
 // from inside an http.Handler. It requires that the http Server
 // supports HTTP/2.
 func NewServerHandlerTransport(w http.ResponseWriter, r *http.Request) (ServerTransport, error) {
-	if r.ProtoMajor != 2 {
+	if r.ProtoMajor != 2 && r.Header.Get("Content-Type") != grpcBrowserContentType {
 		return nil, errors.New("gRPC requires HTTP/2")
 	}
 	if r.Method != "POST" {
@@ -80,6 +91,7 @@ func NewServerHandlerTransport(w http.ResponseWriter, r *http.Request) (ServerTr
 		req:      r,
 		closedCh: make(chan struct{}),
 		writes:   make(chan func()),
+		isBrowserAdjustedTransport: r.Header.Get("Content-Type") == grpcBrowserContentType,
 	}
 
 	if v := r.Header.Get("grpc-timeout"); v != "" {
@@ -134,6 +146,8 @@ type serverHandlerTransport struct {
 
 	closeOnce sync.Once
 	closedCh  chan struct{} // closed on Close
+
+	isBrowserAdjustedTransport bool  // whether the protocol is adjusted for browser consumption
 
 	// writes is a channel of code to run serialized in the
 	// ServeHTTP (HandleStreams) goroutine. The channel is closed
@@ -191,24 +205,45 @@ func (ht *serverHandlerTransport) WriteStatus(s *Stream, statusCode codes.Code, 
 		// first call (for example, in end2end tests's TestNoService).
 		ht.rw.(http.Flusher).Flush()
 
-		h := ht.rw.Header()
-		h.Set("Grpc-Status", fmt.Sprintf("%d", statusCode))
-		if statusDesc != "" {
-			h.Set("Grpc-Message", encodeGrpcMessage(statusDesc))
-		}
-		if md := s.Trailer(); len(md) > 0 {
-			for k, vv := range md {
-				// Clients don't tolerate reading restricted headers after some non restricted ones were sent.
-				if isReservedHeader(k) {
-					continue
-				}
-				for _, v := range vv {
-					// http2 ResponseWriter mechanism to
-					// send undeclared Trailers after the
-					// headers have possibly been written.
-					h.Add(http2.TrailerPrefix+k, v)
+		if !ht.isBrowserAdjustedTransport {
+			h := ht.rw.Header()
+			h.Set("Grpc-Status", fmt.Sprintf("%d", statusCode))
+			if statusDesc != "" {
+				h.Set("Grpc-Message", encodeGrpcMessage(statusDesc))
+			}
+			if md := s.Trailer(); len(md) > 0 {
+				for k, vv := range md {
+					// Clients don't tolerate reading restricted headers after some non restricted ones were sent.
+					if isReservedHeader(k) {
+						continue
+					}
+					for _, v := range vv {
+						// http2 ResponseWriter mechanism to
+						// send undeclared Trailers after the
+						// headers have possibly been written.
+						h.Add(http2.TrailerPrefix + k, v)
+					}
 				}
 			}
+		} else {
+			term := &BrowserTerminator{
+				StatusCode: int32(statusCode),
+				StatusDesc: statusDesc,
+			}
+			if md := s.Trailer(); len(md) > 0 {
+				for k, vv := range md {
+					for _, v := range vv {
+						term.Trailer = append(term.Trailer, &BrowserTerminator_TrailingHeader{Name: k, Value: v})
+					}
+				}
+			}
+			out, _ := proto.Marshal(term)
+			terminator := make([]byte, 8)
+			copy(terminator, grpcBrowserTerminationMarker)
+			binary.BigEndian.PutUint32(terminator[4:], uint32(len(out)))
+			ht.rw.Write(terminator)
+			ht.rw.Write(out)
+			ht.rw.(http.Flusher).Flush()
 		}
 	})
 	close(ht.writes)
@@ -227,14 +262,19 @@ func (ht *serverHandlerTransport) writeCommonHeaders(s *Stream) {
 	h["Date"] = nil // suppress Date to make tests happy; TODO: restore
 	h.Set("Content-Type", "application/grpc")
 
-	// Predeclare trailers we'll set later in WriteStatus (after the body).
-	// This is a SHOULD in the HTTP RFC, and the way you add (known)
-	// Trailers per the net/http.ResponseWriter contract.
-	// See https://golang.org/pkg/net/http/#ResponseWriter
-	// and https://golang.org/pkg/net/http/#example_ResponseWriter_trailers
-	h.Add("Trailer", "Grpc-Status")
-	h.Add("Trailer", "Grpc-Message")
 
+	if ! ht.isBrowserAdjustedTransport {
+		h.Set("Content-Type", "application/grpc")
+		// Predeclare trailers we'll set later in WriteStatus (after the body).
+		// This is a SHOULD in the HTTP RFC, and the way you add (known)
+		// Trailers per the net/http.ResponseWriter contract.
+		// See https://golang.org/pkg/net/http/#ResponseWriter
+		// and https://golang.org/pkg/net/http/#example_ResponseWriter_trailers
+		h.Add("Trailer", "Grpc-Status")
+		h.Add("Trailer", "Grpc-Message")
+	} else {
+		h.Set("Content-Type", grpcBrowserContentType)
+	}
 	if s.sendCompress != "" {
 		h.Set("Grpc-Encoding", s.sendCompress)
 	}
